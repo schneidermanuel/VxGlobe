@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>EarthVisualizer</title>
+<link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <div id="globeViz"></div>
+
+  <div id="ui">
+    <h1>EarthVisualizer</h1>
+
+    <div id="searchBox">
+      <input id="searchInput" type="text" placeholder="Search city or airport (e.g. JFK, Tokyo)" autocomplete="off" />
+      <ul id="suggestions" class="hidden"></ul>
+    </div>
+
+    <div id="modeToggle">
+      <button id="modeChainBtn" class="active">Chain</button>
+      <button id="modeHubBtn">Hub</button>
+    </div>
+    <div id="modeHint">Stops connect in order: A → B → C.</div>
+
+    <div id="routePanel">
+      <div id="routeEmpty">Search and add at least 2 airports to build a route.</div>
+      <ol id="routeList"></ol>
+    </div>
+
+    <div id="durationRow">
+      <label for="durationInput">Duration per leg (s)</label>
+      <input id="durationInput" type="number" min="3" max="30" step="0.5" value="12" />
+    </div>
+
+    <div id="controls">
+      <button id="playBtn" disabled>&#9654; Play Route</button>
+      <button id="recordBtn" disabled>&#9679; Record</button>
+      <button id="stopBtn" class="hidden">&#9632; Stop</button>
+    </div>
+
+    <div id="statusMsg"></div>
+  </div>
+
+  <script src="https://unpkg.com/globe.gl@2.31.0/dist/globe.gl.min.js"></script>
+  <script src="data/airports.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>
