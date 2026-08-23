@@ -1,78 +1,6 @@
 (function () {
   "use strict";
 
-  // Separately-loaded Three.js, used to build custom WebGL label objects
-  // (see makeLabelSprite below). globe.gl bundles its own internal copy of
-  // three.js but doesn't expose it, so this app loads its own via a
-  // matching-generation CDN build; three.js's renderer identifies objects
-  // by duck-typed flags (isSprite, isObject3D, ...) rather than instanceof,
-  // so objects built with this separate instance render fine once added to
-  // globe.gl's internal scene.
-  const THREE = window.THREE;
-
-  function roundRectPath(ctx, x, y, w, h, r) {
-    ctx.beginPath();
-    ctx.moveTo(x + r, y);
-    ctx.arcTo(x + w, y, x + w, y + h, r);
-    ctx.arcTo(x + w, y + h, x, y + h, r);
-    ctx.arcTo(x, y + h, x, y, r);
-    ctx.arcTo(x, y, x + w, y, r);
-    ctx.closePath();
-  }
-
-  // Renders an airport label as a WebGL sprite (dark pill + dot + text)
-  // instead of a DOM overlay, so it's part of the actual canvas pixels —
-  // and therefore included when the canvas is captured for recording.
-  function makeLabelSprite(text) {
-    const scaleFactor = 2;
-    const fontSize = 30;
-    const paddingX = 16;
-    const paddingY = 9;
-    const dotR = 6;
-    const gap = 7;
-    const font = `600 ${fontSize}px -apple-system, Arial, sans-serif`;
-
-    const measureCtx = document.createElement("canvas").getContext("2d");
-    measureCtx.font = font;
-    const textWidth = measureCtx.measureText(text).width;
-
-    const logicalWidth = Math.ceil(paddingX * 2 + dotR * 2 + gap + textWidth);
-    const logicalHeight = Math.ceil(fontSize + paddingY * 2);
-
-    const canvas = document.createElement("canvas");
-    canvas.width = logicalWidth * scaleFactor;
-    canvas.height = logicalHeight * scaleFactor;
-    const ctx = canvas.getContext("2d");
-    ctx.scale(scaleFactor, scaleFactor);
-    ctx.font = font;
-    ctx.textBaseline = "middle";
-
-    const r = logicalHeight / 2;
-    ctx.fillStyle = "rgba(15, 15, 22, 0.92)";
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.35)";
-    ctx.lineWidth = 1.5;
-    roundRectPath(ctx, 0.75, 0.75, logicalWidth - 1.5, logicalHeight - 1.5, r - 0.75);
-    ctx.fill();
-    ctx.stroke();
-
-    ctx.fillStyle = "#00d4ff";
-    ctx.beginPath();
-    ctx.arc(paddingX + dotR, logicalHeight / 2, dotR, 0, Math.PI * 2);
-    ctx.fill();
-
-    ctx.fillStyle = "#ffffff";
-    ctx.fillText(text, paddingX + dotR * 2 + gap, logicalHeight / 2 + 1);
-
-    const texture = new THREE.CanvasTexture(canvas);
-    texture.needsUpdate = true;
-    const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false });
-    const sprite = new THREE.Sprite(material);
-
-    const worldHeight = 6;
-    sprite.scale.set(worldHeight * (logicalWidth / logicalHeight), worldHeight, 1);
-    return sprite;
-  }
-
   // ---------- Globe init ----------
   const world = Globe({ rendererConfig: { preserveDrawingBuffer: true } })(
     document.getElementById("globeViz")
@@ -83,14 +11,7 @@
     .width(window.innerWidth)
     .height(window.innerHeight)
     .pointOfView({ lat: 20, lng: 0, altitude: 2.2 }, 0)
-    .showAtmosphere(true)
-    .atmosphereColor("#3a9bdc")
-    .atmosphereAltitude(0.18)
-    .objectLat("lat")
-    .objectLng("lng")
-    .objectAltitude(0.02)
-    .objectThreeObject((d) => makeLabelSprite(`${d.iata || d.icao} ${d.city || d.name}`))
-    .objectsData([])
+    .showAtmosphere(false)
     .arcColor(() => ["#00d4ff", "#ff5b5b"])
     .arcAltitudeAutoScale(0.6)
     .arcDashLength(0.4)
@@ -113,6 +34,119 @@
   const controls = world.controls();
   controls.autoRotate = true;
   controls.autoRotateSpeed = 0.3;
+
+  function getGlobeCanvas() {
+    return document.querySelector("#globeViz canvas");
+  }
+
+  // ---------- Airport labels (2D canvas overlay, not part of the WebGL scene) ----------
+  // Labels are projected from lat/lng to screen pixels every frame using
+  // globe.gl's own getCoords()/getScreenCoords() utilities and drawn as a
+  // plain dark pill + dot + text. Keeping this out of the WebGL scene avoids
+  // touching globe.gl's renderer/lighting at all. For recording, the globe
+  // canvas and this overlay are composited into a hidden canvas so the
+  // labels end up in the exported video too.
+  const overlayCanvas = document.getElementById("labelOverlay");
+  const overlayCtx = overlayCanvas.getContext("2d");
+  const recordCanvas = document.createElement("canvas");
+  const recordCtx = recordCanvas.getContext("2d");
+
+  function resizeOverlay() {
+    const dpr = window.devicePixelRatio || 1;
+    overlayCanvas.width = window.innerWidth * dpr;
+    overlayCanvas.height = window.innerHeight * dpr;
+    overlayCanvas.style.width = window.innerWidth + "px";
+    overlayCanvas.style.height = window.innerHeight + "px";
+    overlayCtx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  resizeOverlay();
+  window.addEventListener("resize", resizeOverlay);
+
+  function roundRectPath(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  function drawBadge(ctx, screenX, screenY, text) {
+    const fontSize = 13;
+    const paddingX = 10;
+    const paddingY = 5;
+    const dotR = 4;
+    const gap = 5;
+    ctx.font = `600 ${fontSize}px -apple-system, Arial, sans-serif`;
+    ctx.textBaseline = "middle";
+    const textWidth = ctx.measureText(text).width;
+    const w = paddingX * 2 + dotR * 2 + gap + textWidth;
+    const h = fontSize + paddingY * 2;
+    const x = screenX - w / 2;
+    const y = screenY - h - 14; // float just above the point
+
+    roundRectPath(ctx, x, y, w, h, h / 2);
+    ctx.fillStyle = "rgba(15, 15, 22, 0.92)";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.35)";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    ctx.fillStyle = "#00d4ff";
+    ctx.beginPath();
+    ctx.arc(x + paddingX + dotR, y + h / 2, dotR, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(text, x + paddingX + dotR * 2 + gap, y + h / 2 + 1);
+  }
+
+  // Screen position for an airport, or null if it's on the far side of the globe.
+  function projectAirport(a) {
+    const pos = world.getCoords(a.lat, a.lng, 0.02);
+    const cam = world.camera().position;
+    const facingCamera = pos.x * cam.x + pos.y * cam.y + pos.z * cam.z > 0;
+    if (!facingCamera) return null;
+    return world.getScreenCoords(pos.x, pos.y, pos.z);
+  }
+
+  function drawLabels(ctx) {
+    route.forEach((a) => {
+      const screen = projectAirport(a);
+      if (!screen) return;
+      drawBadge(ctx, screen.x, screen.y, `${a.iata || a.icao} ${a.city || a.name}`);
+    });
+  }
+
+  // Not invoked directly: requestAnimationFrame defers the first run to the
+  // next paint, by which time `route` (declared further down) is defined.
+  function overlayLoop() {
+    overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+    drawLabels(overlayCtx);
+    requestAnimationFrame(overlayLoop);
+  }
+  requestAnimationFrame(overlayLoop);
+
+  // Only runs while recording: composites the globe canvas + label overlay
+  // into recordCanvas, which is what actually gets captureStream()'d.
+  let composeRAF = null;
+  function composeLoop() {
+    const globeCanvas = getGlobeCanvas();
+    if (globeCanvas) {
+      if (recordCanvas.width !== globeCanvas.width || recordCanvas.height !== globeCanvas.height) {
+        recordCanvas.width = globeCanvas.width;
+        recordCanvas.height = globeCanvas.height;
+      }
+      recordCtx.setTransform(1, 0, 0, 1, 0, 0);
+      recordCtx.drawImage(globeCanvas, 0, 0, recordCanvas.width, recordCanvas.height);
+      const scaleX = recordCanvas.width / window.innerWidth;
+      const scaleY = recordCanvas.height / window.innerHeight;
+      recordCtx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
+      drawLabels(recordCtx);
+    }
+    composeRAF = requestAnimationFrame(composeLoop);
+  }
 
   // ---------- Dataset ----------
   // Loaded from data/airports.js (window.AIRPORTS_DATA), a plain <script> tag
@@ -259,13 +293,11 @@
   function addToRoute(airport) {
     route.push({ ...airport, uid: routeSeq++ });
     renderRouteList();
-    updateGlobePoints();
   }
 
   function removeFromRoute(uid) {
     route = route.filter((r) => r.uid !== uid);
     renderRouteList();
-    updateGlobePoints();
   }
 
   function moveInRoute(uid, direction) {
@@ -274,7 +306,6 @@
     if (i < 0 || j < 0 || j >= route.length) return;
     [route[i], route[j]] = [route[j], route[i]];
     renderRouteList();
-    updateGlobePoints();
   }
 
   function renderRouteList() {
@@ -315,10 +346,6 @@
     const enoughStops = route.length >= 2;
     playBtn.disabled = !enoughStops || isPlaying;
     recordBtn.disabled = !enoughStops || isPlaying || !recordingSupported;
-  }
-
-  function updateGlobePoints() {
-    world.objectsData(route);
   }
 
   // ---------- Arc animation sequencing ----------
@@ -476,17 +503,17 @@
     setStatus("Recording not supported in this browser — try Chrome or Firefox.");
   }
 
-  function getGlobeCanvas() {
-    return document.querySelector("#globeViz canvas");
-  }
-
   function startRecording() {
-    const canvas = getGlobeCanvas();
-    if (!canvas) {
+    const globeCanvas = getGlobeCanvas();
+    if (!globeCanvas) {
       setStatus("Globe canvas not found — cannot record.");
       return false;
     }
-    const stream = canvas.captureStream(30);
+    recordCanvas.width = globeCanvas.width;
+    recordCanvas.height = globeCanvas.height;
+    composeLoop();
+
+    const stream = recordCanvas.captureStream(30);
     chunks = [];
     const mimeType = MediaRecorder.isTypeSupported("video/webm;codecs=vp9")
       ? "video/webm;codecs=vp9"
@@ -507,6 +534,10 @@
   }
 
   function saveRecording() {
+    if (composeRAF) {
+      cancelAnimationFrame(composeRAF);
+      composeRAF = null;
+    }
     const blob = new Blob(chunks, { type: "video/webm" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
