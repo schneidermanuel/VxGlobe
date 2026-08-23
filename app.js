@@ -41,8 +41,9 @@
 
   // ---------- Airport labels (2D canvas overlay, not part of the WebGL scene) ----------
   // Labels are projected from lat/lng to screen pixels every frame using
-  // globe.gl's own getCoords()/getScreenCoords() utilities and drawn as a
-  // plain dark pill + dot + text. Keeping this out of the WebGL scene avoids
+  // globe.gl's own getCoords() plus the camera's public matrices (see
+  // projectAirport below), and drawn as a plain dark pill + dot + text.
+  // Keeping this out of the WebGL scene avoids
   // touching globe.gl's renderer/lighting at all. For recording, the globe
   // canvas and this overlay are composited into a hidden canvas so the
   // labels end up in the exported video too.
@@ -102,13 +103,38 @@
     ctx.fillText(text, x + paddingX + dotR * 2 + gap, y + h / 2 + 1);
   }
 
-  // Screen position for an airport, or null if it's on the far side of the globe.
+  // Applies a THREE.Matrix4 (read via its public .elements array) to a point,
+  // the same math Vector3.applyMatrix4 uses — avoids needing a THREE.Vector3
+  // instance, since only world.camera() (a plain object read) is available.
+  function transformPoint(m, x, y, z) {
+    const e = m.elements;
+    return {
+      x: e[0] * x + e[4] * y + e[8] * z + e[12],
+      y: e[1] * x + e[5] * y + e[9] * z + e[13],
+      z: e[2] * x + e[6] * y + e[10] * z + e[14],
+      w: e[3] * x + e[7] * y + e[11] * z + e[15],
+    };
+  }
+
+  // Screen position for an airport, or null if it's on the far side of the
+  // globe or behind the camera.
   function projectAirport(a) {
     const pos = world.getCoords(a.lat, a.lng, 0.02);
-    const cam = world.camera().position;
-    const facingCamera = pos.x * cam.x + pos.y * cam.y + pos.z * cam.z > 0;
+    const camera = world.camera();
+    const camPos = camera.position;
+    const facingCamera = pos.x * camPos.x + pos.y * camPos.y + pos.z * camPos.z > 0;
     if (!facingCamera) return null;
-    return world.getScreenCoords(pos.x, pos.y, pos.z);
+
+    const view = transformPoint(camera.matrixWorldInverse, pos.x, pos.y, pos.z);
+    const clip = transformPoint(camera.projectionMatrix, view.x, view.y, view.z);
+    if (clip.w <= 0) return null;
+
+    const ndcX = clip.x / clip.w;
+    const ndcY = clip.y / clip.w;
+    return {
+      x: (ndcX * 0.5 + 0.5) * window.innerWidth,
+      y: (1 - (ndcY * 0.5 + 0.5)) * window.innerHeight,
+    };
   }
 
   function drawLabels(ctx) {
@@ -121,9 +147,15 @@
 
   // Not invoked directly: requestAnimationFrame defers the first run to the
   // next paint, by which time `route` (declared further down) is defined.
+  // Wrapped in try/catch so one bad frame can't silently kill the loop —
+  // an uncaught error here previously stopped all future labels.
   function overlayLoop() {
-    overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
-    drawLabels(overlayCtx);
+    try {
+      overlayCtx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
+      drawLabels(overlayCtx);
+    } catch (err) {
+      console.error("overlayLoop error:", err);
+    }
     requestAnimationFrame(overlayLoop);
   }
   requestAnimationFrame(overlayLoop);
@@ -132,18 +164,22 @@
   // into recordCanvas, which is what actually gets captureStream()'d.
   let composeRAF = null;
   function composeLoop() {
-    const globeCanvas = getGlobeCanvas();
-    if (globeCanvas) {
-      if (recordCanvas.width !== globeCanvas.width || recordCanvas.height !== globeCanvas.height) {
-        recordCanvas.width = globeCanvas.width;
-        recordCanvas.height = globeCanvas.height;
+    try {
+      const globeCanvas = getGlobeCanvas();
+      if (globeCanvas) {
+        if (recordCanvas.width !== globeCanvas.width || recordCanvas.height !== globeCanvas.height) {
+          recordCanvas.width = globeCanvas.width;
+          recordCanvas.height = globeCanvas.height;
+        }
+        recordCtx.setTransform(1, 0, 0, 1, 0, 0);
+        recordCtx.drawImage(globeCanvas, 0, 0, recordCanvas.width, recordCanvas.height);
+        const scaleX = recordCanvas.width / window.innerWidth;
+        const scaleY = recordCanvas.height / window.innerHeight;
+        recordCtx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
+        drawLabels(recordCtx);
       }
-      recordCtx.setTransform(1, 0, 0, 1, 0, 0);
-      recordCtx.drawImage(globeCanvas, 0, 0, recordCanvas.width, recordCanvas.height);
-      const scaleX = recordCanvas.width / window.innerWidth;
-      const scaleY = recordCanvas.height / window.innerHeight;
-      recordCtx.setTransform(scaleX, 0, 0, scaleY, 0, 0);
-      drawLabels(recordCtx);
+    } catch (err) {
+      console.error("composeLoop error:", err);
     }
     composeRAF = requestAnimationFrame(composeLoop);
   }
