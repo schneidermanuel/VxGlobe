@@ -1,6 +1,78 @@
 (function () {
   "use strict";
 
+  // Separately-loaded Three.js, used to build custom WebGL label objects
+  // (see makeLabelSprite below). globe.gl bundles its own internal copy of
+  // three.js but doesn't expose it, so this app loads its own via a
+  // matching-generation CDN build; three.js's renderer identifies objects
+  // by duck-typed flags (isSprite, isObject3D, ...) rather than instanceof,
+  // so objects built with this separate instance render fine once added to
+  // globe.gl's internal scene.
+  const THREE = window.THREE;
+
+  function roundRectPath(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
+  // Renders an airport label as a WebGL sprite (dark pill + dot + text)
+  // instead of a DOM overlay, so it's part of the actual canvas pixels —
+  // and therefore included when the canvas is captured for recording.
+  function makeLabelSprite(text) {
+    const scaleFactor = 2;
+    const fontSize = 30;
+    const paddingX = 16;
+    const paddingY = 9;
+    const dotR = 6;
+    const gap = 7;
+    const font = `600 ${fontSize}px -apple-system, Arial, sans-serif`;
+
+    const measureCtx = document.createElement("canvas").getContext("2d");
+    measureCtx.font = font;
+    const textWidth = measureCtx.measureText(text).width;
+
+    const logicalWidth = Math.ceil(paddingX * 2 + dotR * 2 + gap + textWidth);
+    const logicalHeight = Math.ceil(fontSize + paddingY * 2);
+
+    const canvas = document.createElement("canvas");
+    canvas.width = logicalWidth * scaleFactor;
+    canvas.height = logicalHeight * scaleFactor;
+    const ctx = canvas.getContext("2d");
+    ctx.scale(scaleFactor, scaleFactor);
+    ctx.font = font;
+    ctx.textBaseline = "middle";
+
+    const r = logicalHeight / 2;
+    ctx.fillStyle = "rgba(15, 15, 22, 0.92)";
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.35)";
+    ctx.lineWidth = 1.5;
+    roundRectPath(ctx, 0.75, 0.75, logicalWidth - 1.5, logicalHeight - 1.5, r - 0.75);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = "#00d4ff";
+    ctx.beginPath();
+    ctx.arc(paddingX + dotR, logicalHeight / 2, dotR, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#ffffff";
+    ctx.fillText(text, paddingX + dotR * 2 + gap, logicalHeight / 2 + 1);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.needsUpdate = true;
+    const material = new THREE.SpriteMaterial({ map: texture, transparent: true, depthWrite: false });
+    const sprite = new THREE.Sprite(material);
+
+    const worldHeight = 6;
+    sprite.scale.set(worldHeight * (logicalWidth / logicalHeight), worldHeight, 1);
+    return sprite;
+  }
+
   // ---------- Globe init ----------
   const world = Globe({ rendererConfig: { preserveDrawingBuffer: true } })(
     document.getElementById("globeViz")
@@ -14,16 +86,11 @@
     .showAtmosphere(true)
     .atmosphereColor("#3a9bdc")
     .atmosphereAltitude(0.18)
-    .htmlLat("lat")
-    .htmlLng("lng")
-    .htmlAltitude(0.015)
-    .htmlElement((d) => {
-      const el = document.createElement("div");
-      el.className = "airport-badge";
-      el.innerHTML = `<span class="dot"></span><span class="txt">${d.iata || d.icao} ${d.city || d.name}</span>`;
-      return el;
-    })
-    .htmlElementsData([])
+    .objectLat("lat")
+    .objectLng("lng")
+    .objectAltitude(0.02)
+    .objectThreeObject((d) => makeLabelSprite(`${d.iata || d.icao} ${d.city || d.name}`))
+    .objectsData([])
     .arcColor(() => ["#00d4ff", "#ff5b5b"])
     .arcAltitudeAutoScale(0.6)
     .arcDashLength(0.4)
@@ -251,7 +318,7 @@
   }
 
   function updateGlobePoints() {
-    world.htmlElementsData(route);
+    world.objectsData(route);
   }
 
   // ---------- Arc animation sequencing ----------

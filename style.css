@@ -18,33 +18,6 @@ html, body {
   inset: 0;
 }
 
-.airport-badge {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 10px 4px 7px;
-  background: linear-gradient(180deg, rgba(28, 28, 40, 0.92), rgba(10, 10, 16, 0.88));
-  border: 1px solid rgba(255, 255, 255, 0.28);
-  border-radius: 999px;
-  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.55), inset 0 1px 0 rgba(255, 255, 255, 0.12);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 600;
-  white-space: nowrap;
-  pointer-events: none;
-  transform: translate(-50%, -140%);
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
-}
-
-.airport-badge .dot {
-  width: 7px;
-  height: 7px;
-  flex-shrink: 0;
-  border-radius: 50%;
-  background: #00d4ff;
-  box-shadow: 0 0 5px rgba(0, 212, 255, 0.9);
-}
-
 #ui {
   position: absolute;
   top: 16px;

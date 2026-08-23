@@ -37,6 +37,6 @@ This re-downloads the latest CSV and rewrites `data/airports.js` (`window.AIRPOR
 
 ## Notes / known limitations
 
-- The globe texture and library are loaded from a CDN (unpkg) at runtime, so an internet connection is required to use the app (the airport dataset itself is local/offline once generated).
+- The globe texture and libraries (globe.gl, three.js) are loaded from a CDN (unpkg) at runtime, so an internet connection is required to use the app (the airport dataset itself is local/offline once generated). Airport labels are rendered as real WebGL objects (not DOM overlays) so they're included in recordings.
 - Recording relies on `HTMLCanvasElement.captureStream()` + `MediaRecorder`, supported in Chrome and Firefox, not in Safari.
 - Output video is WebM only (no MP4 export).
